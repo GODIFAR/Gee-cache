@@ -1,0 +1,59 @@
+                                        是
+接收 key --> 检查是否被缓存 -----> 返回缓存值 ⑴  
+                |  否                         是
+                |-----> 是否应当从远程节点获取 -----> 与远程节点交互 --> 返回缓存值 ⑵ 
+                            |  否
+                            |-----> 调用`回调函数`，获取值并添加到缓存 --> 返回缓存值 ⑶
+
+
+
+使用一致性哈希选择节点        是                                    是
+    |-----> 是否是远程节点 -----> HTTP 客户端访问远程节点 --> 成功？-----> 服务端返回返回值
+                    |  否                                    ↓  否
+                    |----------------------------> 回退到本地节点处理。
+
+
+
+group代表一类资源,一个group结构体代表的是一个节点,存储了一部分缓存数据,具体一个值是到哪个具体节点读取则是由算法决定的（这里是一致性哈希算法，一致性哈希算法可以理解为把地址空间化成一个圈，键值的Key先遇到谁就是谁，具体的看代码实现）。group中注册了一个peers数组，相当于是其他节点的电话簿，是用作在缓存miss的时候向其他节点请求数据用。而这个peer其实就是先前定义的httppool,定义了节点所在的Ip、端口。
+
+http.Get(u) 直接到了 ServeHTTP，这一块如果没有用 Go 实现过网站，就挺不好理解的。ServeHTTP 是 net/http 的接口，实现了这个接口，请求就会被路由到实现函数来。
+
+另外，geecache 既作为存储的实例，提供 http 接口，又可以作为 API 层，供应用程序直接调用，这两个功能的切换也可能会比较绕
+
+
+
+
+// Overall flow char										     requsets					        local
+// gee := createGroup() --------> /api Service : 9999 ------------------------------> gee.Get(key) ------> g.mainCache.Get(key)
+// 						|											^					|
+// 						|											|					|remote
+// 						v											|					v
+// 				cache Service : 800x								|			g.peers.PickPeer(key)
+// 						|create hash ring & init peerGetter			|					|
+// 						|registry peers write in g.peer				|					|p.httpGetters[p.hashRing(key)]
+// 						v											|					|
+//			httpPool.Set(otherAddrs...)								|					v
+// 		g.peers = gee.RegisterPeers(httpPool)						|			g.getFromPeer(peerGetter, key)
+// 						|											|					|
+// 						|											|					|
+// 						v											|					v
+// 		http.ListenAndServe("localhost:800x", httpPool)<------------+--------------peerGetter.Get(key)
+// 						|											|
+// 						|requsets									|
+// 						v											|
+// 					p.ServeHttp(w, r)								|
+// 						|											|
+// 						|url.parse()								|
+// 						|--------------------------------------------
+
+
+
+
+ geecache/
+    |--lru/
+        |--lru.go  // lru 缓存淘汰策略
+    |--byteview.go // 缓存值的抽象与封装
+    |--cache.go    // 并发控制
+    |--geecache.go // 负责与外部交互，控制缓存存储和获取的主流程
+	|--http.go     // 提供被其他节点访问的能力(基于http)
+
